@@ -21,6 +21,7 @@ import (
 	"rsc.io/getopt"
 	"strconv"
 	"strings"
+	securejoin "github.com/cyphar/filepath-securejoin"
 )
 
 var (
@@ -226,7 +227,14 @@ func extract_entry(areader *zip.ReadCloser, file *zip.FileHeader) {
 	var err error
 	var dest_path string
 	var dest *os.File
-
+		
+	// Make base destination absolute (stable even with sudo)
+	baseDest, err := filepath.Abs(destdir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bad destdir %q: %v\n", destdir, err)
+		os.Exit(1)
+	}
+	
 	/* Business as usual. */
 	if fVerbose && !fJSON {
 		fmt.Printf("x %s ", file.Name)
@@ -245,13 +253,23 @@ func extract_entry(areader *zip.ReadCloser, file *zip.FileHeader) {
 	 * For some reason, this is an option that has been requisited
 	 * per users of Info-ZIP's unzip command for some years, so we
 	 * will be having it implemented here as well. */
-	if !fExplode { /* Default. */
-		dest_path = filepath.Join(destdir, file.Name)
-	} else {
-		dest_path = filepath.Join(destdir, filepath.Base(file.Name))
+
+	entryName := file.Name
+	if fExplode {
+		entryName = filepath.Base(file.Name)
+	}
+
+	entryName = filepath.ToSlash(entryName)
+	entryName = strings.TrimLeft(entryName, "/")
+	
+	dest_path, err = securejoin.SecureJoin(baseDest, entryName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "path traversal blocked: entry=%q: %v\n", file.Name, err)
+		os.Exit(1) // or: return (to skip)
 	}
 
 	if file.FileInfo().IsDir() && !fExplode {
+
 		err = os.MkdirAll(dest_path, file.Mode())
 		if fVerbose && !fJSON {
 			fmt.Println("directory")
